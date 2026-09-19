@@ -1,0 +1,78 @@
+desc: Psychoacoustic Bass (Missing Fundamental)
+
+bassFreq:100<40,250,1>Bass band cutoff (Hz)
+harmonicDrive:3<0.2,10,0.1>Harmonic drive
+evenMix:0.6<0,1,0.01>Even/odd balance
+harmonicsMix:1.0<0,2,0.01>Harmonics mix
+cutFundamental:1<0,1,1{Off,On}>Remove original bass band
+
+@init
+bassFreq = 100;
+harmonicDrive = 3;
+evenMix = 0.6;
+harmonicsMix = 1.0;
+cutFundamental = 1;
+
+function LP_set(frequency qFactor)(
+    x = (frequency * 2.f * $PI) / srate;
+    sinX = sin(x);
+    y = sinX / (qFactor * 2.f);
+    cosX = cos(x);
+    z = (1.f - cosX) / 2.f;
+    _a0 = y + 1.f;
+    _a1 = cosX * -2.f;
+    _a2 = 1.f - y;
+    _b0 = z;
+    _b1 = 1.f - cosX;
+    _b2 = z;
+    this.y_2 = 0; this.y_1 = 0; this.x_2 = 0; this.x_1 = 0;
+    this.b0 = _b0 / _a0;
+    this.b1 = _b1 / _a0;
+    this.b2 = _b2 / _a0;
+    this.a1 = -_a1 / _a0;
+    this.a2 = -_a2 / _a0;
+);
+
+function LP_process(sample)(
+    out = sample * this.b0 + this.x_1 * this.b1 + this.x_2 * this.b2 + this.y_1 * this.a1 + this.y_2 * this.a2;
+    this.y_2 = this.y_1; this.y_1 = out;
+    this.x_2 = this.x_1; this.x_1 = sample;
+    out;
+);
+
+lp_l.LP_set(bassFreq, 0.707);
+lp_r.LP_set(bassFreq, 0.707);
+dcL = 0; dcR = 0;
+
+@sample
+bassL = lp_l.LP_process(spl0);
+bassR = lp_r.LP_process(spl1);
+
+dL = bassL * harmonicDrive;
+dR = bassR * harmonicDrive;
+dL = dL / (1 + abs(dL));
+dR = dR / (1 + abs(dR));
+
+evenL = dL * dL;
+evenR = dR * dR;
+oddL = dL * dL * dL;
+oddR = dR * dR * dR;
+
+harmL = evenMix * evenL + (1 - evenMix) * oddL;
+harmR = evenMix * evenR + (1 - evenMix) * oddR;
+
+dcL = 0.9995 * dcL + 0.0005 * harmL;
+dcR = 0.9995 * dcR + 0.0005 * harmR;
+harmL -= dcL;
+harmR -= dcR;
+
+cutFundamental > 0.5 ? (
+  dryL = spl0 - bassL;
+  dryR = spl1 - bassR;
+) : (
+  dryL = spl0;
+  dryR = spl1;
+);
+
+spl0 = dryL + harmL * harmonicsMix;
+spl1 = dryR + harmR * harmonicsMix;
