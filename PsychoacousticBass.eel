@@ -5,7 +5,7 @@ harmonicDrive:3<0.2,10,0.1>Harmonic drive
 evenMix:0.6<0,1,0.01>Even/odd balance
 harmonicsMix:1.0<0,2,0.01>Harmonics mix
 cutFundamental:1<0,1,1{Off,On}>Remove original bass band
-cutOrder:2<1,2,1{12 dB/oct,24 dB/oct}>Fundamental cut slope
+cutOrder:1<0,1,1{12 dB/oct,24 dB/oct}>Fundamental cut slope
 
 @init
 bassFreq = 45;
@@ -13,10 +13,19 @@ harmonicDrive = 3.25;
 evenMix = 0.31;
 harmonicsMix = 1.16;
 cutFundamental = 1;
-cutOrder = 2;
+cutOrder = 1;
 cutQ = 0.707;
 
-function LP_set(frequency qFactor)(
+// Memory layout per filter instance: 7 slots [b0,b1,b2,a1,a2,x1,x2,y1,y2] -> use 9 slots
+// slot offsets: 0=b0 1=b1 2=b2 3=a1 4=a2 5=x1 6=x2 7=y1 8=y2
+LP_L = 0;
+LP_R = 9;
+HP1_L = 18;
+HP1_R = 27;
+HP2_L = 36;
+HP2_R = 45;
+
+function LP_set(base frequency qFactor)(
     x = (frequency * 2.f * $PI) / srate;
     sinX = sin(x);
     y = sinX / (qFactor * 2.f);
@@ -28,22 +37,23 @@ function LP_set(frequency qFactor)(
     _b0 = z;
     _b1 = 1.f - cosX;
     _b2 = z;
-    this.y_2 = 0; this.y_1 = 0; this.x_2 = 0; this.x_1 = 0;
-    this.b0 = _b0 / _a0;
-    this.b1 = _b1 / _a0;
-    this.b2 = _b2 / _a0;
-    this.a1 = -_a1 / _a0;
-    this.a2 = -_a2 / _a0;
+    base[0] = _b0 / _a0;
+    base[1] = _b1 / _a0;
+    base[2] = _b2 / _a0;
+    base[3] = -_a1 / _a0;
+    base[4] = -_a2 / _a0;
+    base[5] = 0; base[6] = 0;
+    base[7] = 0; base[8] = 0;
 );
 
-function LP_process(sample)(
-    out = sample * this.b0 + this.x_1 * this.b1 + this.x_2 * this.b2 + this.y_1 * this.a1 + this.y_2 * this.a2;
-    this.y_2 = this.y_1; this.y_1 = out;
-    this.x_2 = this.x_1; this.x_1 = sample;
+function LP_process(base sample)(
+    out = sample * base[0] + base[5] * base[1] + base[6] * base[2] + base[7] * base[3] + base[8] * base[4];
+    base[8] = base[7]; base[7] = out;
+    base[6] = base[5]; base[5] = sample;
     out;
 );
 
-function HP_set(frequency qFactor)(
+function HP_set(base frequency qFactor)(
     w = (frequency * 2.f * $PI) / srate;
     cosw = cos(w);
     sinw = sin(w);
@@ -54,32 +64,33 @@ function HP_set(frequency qFactor)(
     _a0 = 1.f + alpha;
     _a1 = -2.f * cosw;
     _a2 = 1.f - alpha;
-    this.y_2 = 0; this.y_1 = 0; this.x_2 = 0; this.x_1 = 0;
-    this.b0 = _b0 / _a0;
-    this.b1 = _b1 / _a0;
-    this.b2 = _b2 / _a0;
-    this.a1 = -_a1 / _a0;
-    this.a2 = -_a2 / _a0;
+    base[0] = _b0 / _a0;
+    base[1] = _b1 / _a0;
+    base[2] = _b2 / _a0;
+    base[3] = -_a1 / _a0;
+    base[4] = -_a2 / _a0;
+    base[5] = 0; base[6] = 0;
+    base[7] = 0; base[8] = 0;
 );
 
-function HP_process(sample)(
-    out = sample * this.b0 + this.x_1 * this.b1 + this.x_2 * this.b2 + this.y_1 * this.a1 + this.y_2 * this.a2;
-    this.y_2 = this.y_1; this.y_1 = out;
-    this.x_2 = this.x_1; this.x_1 = sample;
+function HP_process(base sample)(
+    out = sample * base[0] + base[5] * base[1] + base[6] * base[2] + base[7] * base[3] + base[8] * base[4];
+    base[8] = base[7]; base[7] = out;
+    base[6] = base[5]; base[5] = sample;
     out;
 );
 
-lp_l.LP_set(bassFreq, 0.707);
-lp_r.LP_set(bassFreq, 0.707);
-hp1_l.HP_set(bassFreq, cutQ);
-hp1_r.HP_set(bassFreq, cutQ);
-hp2_l.HP_set(bassFreq, cutQ);
-hp2_r.HP_set(bassFreq, cutQ);
+LP_set(LP_L, bassFreq, 0.707);
+LP_set(LP_R, bassFreq, 0.707);
+HP_set(HP1_L, bassFreq, cutQ);
+HP_set(HP1_R, bassFreq, cutQ);
+HP_set(HP2_L, bassFreq, cutQ);
+HP_set(HP2_R, bassFreq, cutQ);
 dcL = 0; dcR = 0;
 
 @sample
-bassL = lp_l.LP_process(spl0);
-bassR = lp_r.LP_process(spl1);
+bassL = LP_process(LP_L, spl0);
+bassR = LP_process(LP_R, spl1);
 
 dL = bassL * harmonicDrive;
 dR = bassR * harmonicDrive;
@@ -100,11 +111,11 @@ harmL -= dcL;
 harmR -= dcR;
 
 cutFundamental > 0.5 ? (
-  dryL = hp1_l.HP_process(spl0);
-  dryR = hp1_r.HP_process(spl1);
-  cutOrder > 1.5 ? (
-    dryL = hp2_l.HP_process(dryL);
-    dryR = hp2_r.HP_process(dryR);
+  dryL = HP_process(HP1_L, spl0);
+  dryR = HP_process(HP1_R, spl1);
+  cutOrder > 0.5 ? (
+    dryL = HP_process(HP2_L, dryL);
+    dryR = HP_process(HP2_R, dryR);
   );
 ) : (
   dryL = spl0;
