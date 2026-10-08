@@ -1,126 +1,144 @@
 desc: Psychoacoustic Bass (Missing Fundamental)
 
-bassFreq:100<40,250,1>Bass band cutoff (Hz)
-harmonicDrive:3<0.2,10,0.1>Harmonic drive
-evenMix:0.6<0,1,0.01>Even/odd balance
+bassFreq:45<40,250,1>Bass band cutoff (Hz)
+harmonicDrive:2<0.2,10,0.1>Harmonic drive
+evenMix:0.31<0,1,0.01>Even/odd balance
 harmonicsMix:1.0<0,2,0.01>Harmonics mix
+harmTop:300<120,1000,10>Harmonics upper limit (Hz)
 cutFundamental:1<0,1,1{Off,On}>Remove original bass band
 cutOrder:1<0,1,1{12 dB/oct,24 dB/oct}>Fundamental cut slope
 
 @init
 bassFreq = 45;
-harmonicDrive = 3.25;
+harmonicDrive = 2;
 evenMix = 0.31;
-harmonicsMix = 1.16;
+harmonicsMix = 1;
+harmTop = 300;
 cutFundamental = 1;
 cutOrder = 1;
-cutQ = 0.707;
 
-// Memory layout per filter instance: 7 slots [b0,b1,b2,a1,a2,x1,x2,y1,y2] -> use 9 slots
-// slot offsets: 0=b0 1=b1 2=b2 3=a1 4=a2 5=x1 6=x2 7=y1 8=y2
-LP_L = 0;
-LP_R = 9;
-HP1_L = 18;
-HP1_R = 27;
-HP2_L = 36;
-HP2_R = 45;
+// constants calibrated by offline simulation
+qBW = 0.70710678;
+subFreq = 25;
+busRatio = 1.6;
+envK = 1.094;
+envEps = 0.03;
+trimE = 1.093;
+hGain = 1.65;
+evenDriveMax = 1.5;
 
-function LP_set(base frequency qFactor)(
-    x = (frequency * 2.f * $PI) / srate;
+function LP_set(frequency qFactor)(
+    x = (frequency * 2 * $PI) / srate;
     sinX = sin(x);
-    y = sinX / (qFactor * 2.f);
+    y = sinX / (qFactor * 2);
     cosX = cos(x);
-    z = (1.f - cosX) / 2.f;
-    _a0 = y + 1.f;
-    _a1 = cosX * -2.f;
-    _a2 = 1.f - y;
+    z = (1 - cosX) / 2;
+    _a0 = y + 1;
+    _a1 = cosX * -2;
+    _a2 = 1 - y;
     _b0 = z;
-    _b1 = 1.f - cosX;
+    _b1 = 1 - cosX;
     _b2 = z;
-    base[0] = _b0 / _a0;
-    base[1] = _b1 / _a0;
-    base[2] = _b2 / _a0;
-    base[3] = -_a1 / _a0;
-    base[4] = -_a2 / _a0;
-    base[5] = 0; base[6] = 0;
-    base[7] = 0; base[8] = 0;
+    this.y_2 = 0; this.y_1 = 0; this.x_2 = 0; this.x_1 = 0;
+    this.b0 = _b0 / _a0;
+    this.b1 = _b1 / _a0;
+    this.b2 = _b2 / _a0;
+    this.a1 = -_a1 / _a0;
+    this.a2 = -_a2 / _a0;
 );
 
-function LP_process(base sample)(
-    out = sample * base[0] + base[5] * base[1] + base[6] * base[2] + base[7] * base[3] + base[8] * base[4];
-    base[8] = base[7]; base[7] = out;
-    base[6] = base[5]; base[5] = sample;
+function LP_process(sample)(
+    out = sample * this.b0 + this.x_1 * this.b1 + this.x_2 * this.b2 + this.y_1 * this.a1 + this.y_2 * this.a2;
+    this.y_2 = this.y_1; this.y_1 = out;
+    this.x_2 = this.x_1; this.x_1 = sample;
     out;
 );
 
-function HP_set(base frequency qFactor)(
-    w = (frequency * 2.f * $PI) / srate;
+function HP_set(frequency qFactor)(
+    w = (frequency * 2 * $PI) / srate;
     cosw = cos(w);
     sinw = sin(w);
-    alpha = sinw / (qFactor * 2.f);
-    _b0 = (1.f + cosw) / 2.f;
-    _b1 = -(1.f + cosw);
-    _b2 = (1.f + cosw) / 2.f;
-    _a0 = 1.f + alpha;
-    _a1 = -2.f * cosw;
-    _a2 = 1.f - alpha;
-    base[0] = _b0 / _a0;
-    base[1] = _b1 / _a0;
-    base[2] = _b2 / _a0;
-    base[3] = -_a1 / _a0;
-    base[4] = -_a2 / _a0;
-    base[5] = 0; base[6] = 0;
-    base[7] = 0; base[8] = 0;
+    alpha = sinw / (qFactor * 2);
+    _b0 = (1 + cosw) / 2;
+    _b1 = -(1 + cosw);
+    _b2 = (1 + cosw) / 2;
+    _a0 = 1 + alpha;
+    _a1 = -2 * cosw;
+    _a2 = 1 - alpha;
+    this.y_2 = 0; this.y_1 = 0; this.x_2 = 0; this.x_1 = 0;
+    this.b0 = _b0 / _a0;
+    this.b1 = _b1 / _a0;
+    this.b2 = _b2 / _a0;
+    this.a1 = -_a1 / _a0;
+    this.a2 = -_a2 / _a0;
 );
 
-function HP_process(base sample)(
-    out = sample * base[0] + base[5] * base[1] + base[6] * base[2] + base[7] * base[3] + base[8] * base[4];
-    base[8] = base[7]; base[7] = out;
-    base[6] = base[5]; base[5] = sample;
+function HP_process(sample)(
+    out = sample * this.b0 + this.x_1 * this.b1 + this.x_2 * this.b2 + this.y_1 * this.a1 + this.y_2 * this.a2;
+    this.y_2 = this.y_1; this.y_1 = out;
+    this.x_2 = this.x_1; this.x_1 = sample;
     out;
 );
 
-LP_set(LP_L, bassFreq, 0.707);
-LP_set(LP_R, bassFreq, 0.707);
-HP_set(HP1_L, bassFreq, cutQ);
-HP_set(HP1_R, bassFreq, cutQ);
-HP_set(HP2_L, bassFreq, cutQ);
-HP_set(HP2_R, bassFreq, cutQ);
-dcL = 0; dcR = 0;
+// harmonic generator chain, mono
+nSub.HP_set(subFreq, qBW);
+nBand.LP_set(bassFreq, qBW);
+busFreq = bassFreq * busRatio;
+nBusHp1.HP_set(busFreq, qBW);
+nBusHp2.HP_set(busFreq, qBW);
+nBusLp.LP_set(harmTop, qBW);
+
+// drypath fundamental cut stereo
+hp1_l.HP_set(bassFreq, qBW);
+hp1_r.HP_set(bassFreq, qBW);
+hp2_l.HP_set(bassFreq, qBW);
+hp2_r.HP_set(bassFreq, qBW);
+
+// fast attack, slow release
+env = 0;
+envAtk = exp(-1 / (0.005 * srate));
+envRel = exp(-1 / (0.1 * srate));
 
 @sample
-bassL = LP_process(LP_L, spl0);
-bassR = LP_process(LP_R, spl1);
+inL = spl0;
+inR = spl1;
 
-dL = bassL * harmonicDrive;
-dR = bassR * harmonicDrive;
-dL = dL / (1 + abs(dL));
-dR = dR / (1 + abs(dR));
+// 1 mono bass band, same harmonics for both ears = no localization cue
+bm = nSub.HP_process((inL + inR) * 0.5);
+bm = nBand.LP_process(bm);
 
-evenL = dL * dL;
-evenR = dR * dR;
-oddL = dL * dL * dL;
-oddR = dR * dR * dR;
+// 2 level tracking, harmonics follow the bass level instead of exploding with it
+ab = abs(bm);
+ec = envRel + (envAtk - envRel) * (ab > env);
+env = ab + ec * (env - ab);
+gl = env * envK;
+xn = bm / (gl + envEps);
 
-harmL = evenMix * evenL + (1 - evenMix) * oddL;
-harmR = evenMix * evenR + (1 - evenMix) * oddR;
+// 3 odd path cubic soft clip, even path, rectified soft clip -drive capped
+so = max(-1, min(1, xn * harmonicDrive));
+so = 1.5 * (so - so * so * so / 3);
+se = max(-1, min(1, xn * min(harmonicDrive, evenDriveMax)));
+se = abs(1.5 * (se - se * se * se / 3));
 
-dcL = 0.9995 * dcL + 0.0005 * harmL;
-dcR = 0.9995 * dcR + 0.0005 * harmR;
-harmL -= dcL;
-harmR -= dcR;
+// 4 mix re-apply level strip the fundamental and the dc and limit the top end
+hm = (evenMix * trimE * se + (1 - evenMix) * so) * gl;
+hm = nBusHp1.HP_process(hm);
+hm = nBusHp2.HP_process(hm);
+hm = nBusLp.LP_process(hm);
+hm = hm * harmonicsMix * hGain;
 
+// 5 optional fundamental cut on the dry signal
 cutFundamental > 0.5 ? (
-  dryL = HP_process(HP1_L, spl0);
-  dryR = HP_process(HP1_R, spl1);
+  dryL = hp1_l.HP_process(inL);
+  dryR = hp1_r.HP_process(inR);
   cutOrder > 0.5 ? (
-    dryL = HP_process(HP2_L, dryL);
-    dryR = HP_process(HP2_R, dryR);
+    dryL = hp2_l.HP_process(dryL);
+    dryR = hp2_r.HP_process(dryR);
   );
 ) : (
-  dryL = spl0;
-  dryR = spl1;
+  dryL = inL;
+  dryR = inR;
 );
 
-spl0 = dryL + harmL * harmonicsMix;
-spl1 = dryR + harmR * harmonicsMix;
+spl0 = dryL + hm;
+spl1 = dryR + hm;
